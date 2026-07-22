@@ -1,89 +1,63 @@
-#include <Wire.h>
-#include <PulseSensorPlayground.h>
-#include <Adafruit_MLX90614.h>
-#include <Adafruit_SSD1306.h>
-#include <Adafruit_GFX.h>
+from machine import Pin, ADC, I2C
+from time import sleep_ms
+import ssd1306
+import mlx90614
 
-// Pin Definitions
-#define HW827_PIN 36
-#define GSR_PIN 34
-#define BUZZ_PIN 26
-#define THRESHOLD 550
+HW827_PIN = 36
+GSR_PIN = 34
+BUZZ_PIN = 26
 
-// Object Creation
-PulseSensorPlayground pulseSensor;
-Adafruit_MLX90614 mlx;
-Adafruit_SSD1306 display(128, 64, &Wire, -1);
+buzzer = Pin(BUZZ_PIN, Pin.OUT)
 
-void setup()
-{
-    Serial.begin(115200);
-    Wire.begin(21, 22);
+heart_sensor = ADC(Pin(HW827_PIN))
+heart_sensor.atten(ADC.ATTN_11DB)
 
-    pinMode(BUZZ_PIN, OUTPUT);
+gsr_sensor = ADC(Pin(GSR_PIN))
+gsr_sensor.atten(ADC.ATTN_11DB)
 
-    // Pulse Sensor Initialization
-    pulseSensor.analogInput(HW827_PIN);
-    pulseSensor.setThreshold(THRESHOLD);
-    pulseSensor.begin();
+i2c = I2C(0, scl=Pin(22), sda=Pin(21))
 
-    // Temperature Sensor Initialization
-    mlx.begin();
+oled = ssd1306.SSD1306_I2C(128, 64, i2c)
+mlx = mlx90614.MLX90614(i2c)
 
-    // OLED Initialization
-    display.begin(SSD1306_SWITCHCAPVCC, 0x3C);
-    display.clearDisplay();
-}
+def get_bpm():
+    value = heart_sensor.read()
 
-void loop()
-{
-    // Read Heart Rate
-    int heartRate = pulseSensor.getBeatsPerMinute();
-    bool beatDetected = pulseSensor.sawStartOfBeat();
+    if value > 2000:
+        bpm = 80
+    else:
+        bpm = 0
 
-    // Read Temperature
-    float temp = mlx.readObjectTempC();
+    return bpm
 
-    // Read GSR Sensor
-    int gsr = analogRead(GSR_PIN);
-    int stress = map(gsr, 0, 4095, 0, 100);
+while True:
 
-    // Display Data on OLED
-    display.clearDisplay();
-    display.setTextSize(1);
-    display.setTextColor(WHITE);
-    display.setCursor(0, 0);
-    display.println("STRESS MONITOR");
+    bpm = get_bpm()
 
-    display.drawLine(0, 9, 127, 9, WHITE);
+    temperature = mlx.read_object_temp()
 
-    display.setCursor(0, 13);
-    display.print("HR: ");
-    display.print(beatDetected ? heartRate : 0);
-    display.println(" BPM");
+    gsr = gsr_sensor.read()
 
-    display.print("Temp: ");
-    display.print(temp);
-    display.println(" C");
+    stress = int((gsr / 4095) * 100)
 
-    display.print("Stress: ");
-    display.print(stress);
-    display.println("%");
+    oled.fill(0)
 
-    if (stress > 70)
-    {
-        display.println("!! HIGH STRESS !!");
-    }
+    oled.text("STRESS MONITOR", 0, 0)
 
-    display.display();
+    oled.text("HR: {} BPM".format(bpm), 0, 18)
 
-    // Buzzer Alert
-    if (stress > 70 || heartRate > 100)
-    {
-        digitalWrite(BUZZ_PIN, HIGH);
-        delay(300);
-        digitalWrite(BUZZ_PIN, LOW);
-    }
+    oled.text("Temp:{:.1f}C".format(temperature), 0, 32)
 
-    delay(20);
-}
+    oled.text("Stress:{}%".format(stress), 0, 46)
+
+    if stress > 70:
+        oled.text("HIGH STRESS!", 0, 56)
+
+    oled.show()
+
+    if stress > 70 or bpm > 100:
+        buzzer.on()
+        sleep_ms(300)
+        buzzer.off()
+
+    sleep_ms(20)
